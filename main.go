@@ -5,12 +5,53 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-var Version = "dev"
+var Version = "dev" // Can still be overridden by ldflags
+
+func getVersion() string {
+	if Version != "dev" {
+		return Version
+	}
+
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+
+	// If installed via 'go install github.com/user/repo@version', info.Main.Version has the version tag
+	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+
+	// If built locally (Go 1.18+), extract vcs revision
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+
+	if revision != "" {
+		if len(revision) > 7 {
+			revision = revision[:7]
+		}
+		if modified {
+			return revision + "-dirty"
+		}
+		return revision
+	}
+
+	return "dev"
+}
 
 type item struct {
 	name            string
@@ -235,7 +276,7 @@ func main() {
 	flag.Parse()
 
 	if versionFlag {
-		fmt.Printf("lks version %s\n", Version)
+		fmt.Printf("lks version %s\n", getVersion())
 		os.Exit(0)
 	}
 
