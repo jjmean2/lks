@@ -1,0 +1,36 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout version
+        uses: actions/checkout@v4
+
+      - name: Build and Release
+        uses: wangyoucao577/go-release-action@v1.40
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          goos: ${{ matrix.goos }}
+          goarch: ${{ matrix.goarch }}
+          binary_name: "lks"
+          # Version inject using ldflags just like the Makefile
+          ldflags: "-X main.Version=${{ github.ref_name }}"
+          # Creates checksums for the binaries
+          md5sum: false
+          sha256sum: true
