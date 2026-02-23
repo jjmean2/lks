@@ -9,9 +9,13 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-var Version = "dev" // Can still be overridden by ldflags
+var (
+	Version  = "dev"                                                // Can still be overridden by ldflags
+	keyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("36")) // Cyan color
+)
 
 func getVersion() string {
 	if Version != "dev" {
@@ -53,10 +57,19 @@ func getVersion() string {
 	return "dev"
 }
 
+type LinkState int
+
+const (
+	StateNone LinkState = iota
+	StateLinked
+	StateInvalid
+)
+
 type item struct {
-	name            string
-	selected        bool
-	initialSelected bool
+	name         string
+	state        LinkState
+	initialState LinkState
+	target       string
 }
 
 type model struct {
@@ -97,7 +110,47 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case " ":
 			if len(m.items) > 0 {
-				m.items[m.cursor].selected = !m.items[m.cursor].selected
+				currentState := m.items[m.cursor].state
+				initialState := m.items[m.cursor].initialState
+
+				if initialState == StateInvalid {
+					// Toggle sequence: ! -> ● -> ○ -> !
+					if currentState == StateInvalid {
+						m.items[m.cursor].state = StateLinked
+					} else if currentState == StateLinked {
+						m.items[m.cursor].state = StateNone
+					} else if currentState == StateNone {
+						m.items[m.cursor].state = StateInvalid
+					}
+				} else {
+					// Toggle sequence: ● -> ○ -> ●
+					if currentState == StateLinked {
+						m.items[m.cursor].state = StateNone
+					} else if currentState == StateNone {
+						m.items[m.cursor].state = StateLinked
+					}
+				}
+			}
+		case "a":
+			if len(m.items) > 0 {
+				allLinked := true
+				for _, it := range m.items {
+					if it.state != StateLinked {
+						allLinked = false
+						break
+					}
+				}
+				for i := range m.items {
+					if allLinked {
+						m.items[i].state = StateNone
+					} else {
+						m.items[i].state = StateLinked
+					}
+				}
+			}
+		case "r":
+			for i := range m.items {
+				m.items[i].state = m.items[i].initialState
 			}
 		case "enter":
 			m.confirmed = true
@@ -114,9 +167,26 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	b.WriteString("Link CLI Tools\n")
-	b.WriteString("Use ↑/↓ arrows to navigate, Space to toggle, Enter to confirm.\n")
-	b.WriteString("Press q, Ctrl+C, or Ctrl+D to quit without saving.\n\n")
+	b.WriteString("Symlink Selection\n\n")
+
+	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true) // Yellow
+	src := pathStyle.Render(m.sourceDir)
+	dst := pathStyle.Render(m.destDir)
+
+	b.WriteString(fmt.Sprintf("The selected executables in %s\nwill be symlinked to %s.\n\n", src, dst))
+
+	up := keyStyle.Render("<up>")
+	down := keyStyle.Render("<down>")
+	space := keyStyle.Render("<space>")
+	aKey := keyStyle.Render("<a>")
+	rKey := keyStyle.Render("<r>")
+	enter := keyStyle.Render("<enter>")
+	qKey := keyStyle.Render("<q>")
+	ctrlC := keyStyle.Render("<ctrl+c>")
+	ctrlD := keyStyle.Render("<ctrl+d>")
+
+	b.WriteString(fmt.Sprintf("Press %s/%s to navigate, %s to toggle, %s to select all/none.\n", up, down, space, aKey))
+	b.WriteString(fmt.Sprintf("Press %s to reset, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, enter, qKey, ctrlC, ctrlD))
 
 	if len(m.items) == 0 {
 		b.WriteString("No executable files found in the source directory.\n")
@@ -130,11 +200,19 @@ func (m model) View() string {
 		}
 
 		checked := "○"
-		if it.selected {
-			checked = "●"
+		targetInfo := ""
+
+		if it.initialState == StateInvalid {
+			targetInfo = fmt.Sprintf(" [%s]", it.target)
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s %s\n", cursor, checked, it.name))
+		if it.state == StateLinked {
+			checked = "●"
+		} else if it.state == StateInvalid {
+			checked = "!"
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, checked, it.name, targetInfo))
 	}
 
 	return b.String()
@@ -160,13 +238,13 @@ func getExecutables(dir string) ([]string, error) {
 	return execs, nil
 }
 
-func isLinkedToSource(destDir, sourceDir, filename string) bool {
+func getLinkState(destDir, sourceDir, filename string) (LinkState, string) {
 	destPath := filepath.Join(destDir, filename)
 	sourcePath := filepath.Join(sourceDir, filename)
 
 	fileInfo, err := os.Lstat(destPath)
 	if err != nil {
-		return false
+		return StateNone, ""
 	}
 
 	if fileInfo.Mode()&os.ModeSymlink != 0 {
@@ -180,11 +258,12 @@ func isLinkedToSource(destDir, sourceDir, filename string) bool {
 			absSource, _ := filepath.Abs(sourcePath)
 
 			if absTarget == absSource {
-				return true
+				return StateLinked, ""
 			}
+			return StateInvalid, target
 		}
 	}
-	return false
+	return StateNone, ""
 }
 
 func applyChanges(sourceDir, destDir string, items []item) error {
@@ -200,14 +279,17 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 	var errorMessages []string
 
 	for _, it := range items {
-		if it.selected == it.initialSelected {
+		if it.state == it.initialState {
 			continue // No change
+		}
+		if it.state == StateInvalid { // Cannot intentionally select an invalid state
+			continue
 		}
 
 		destPath := filepath.Join(absDestDir, it.name)
 		sourcePath := filepath.Join(absSourceDir, it.name)
 
-		if it.selected {
+		if it.state == StateLinked {
 			// Newly selected: create symlink
 			fileInfo, err := os.Lstat(destPath)
 			if err == nil {
@@ -227,9 +309,10 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 			} else {
 				fmt.Printf("Created symlink: %s -> %s\n", destPath, sourcePath)
 			}
-		} else {
-			// Newly unselected: remove symlink ONLY if it points to source
-			if isLinkedToSource(absDestDir, absSourceDir, it.name) {
+		} else if it.state == StateNone {
+			// Newly unselected: remove symlink ONLY if it points to source, or if it was invalid (which means we toggle off the invalid symlink)
+			state, _ := getLinkState(absDestDir, absSourceDir, it.name)
+			if state == StateLinked || state == StateInvalid {
 				err := os.Remove(destPath)
 				if err != nil {
 					errorMessages = append(errorMessages, fmt.Sprintf("Error removing symlink for '%s': %v", it.name, err))
@@ -266,9 +349,11 @@ func main() {
 
 	// Change custom usage description
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
-		fmt.Fprintf(os.Stderr, "  -s, --source string\n\tSource directory containing executables\n")
-		fmt.Fprintf(os.Stderr, "  -d, --destination string\n\tDestination directory for symlinks\n")
+		fmt.Fprintf(os.Stderr, "A CLI tool to interactively manage symlinks between directories.\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: lks -s <src> -d <dest>\n\n")
+		fmt.Fprintf(os.Stderr, "Options:\n")
+		fmt.Fprintf(os.Stderr, "  -s, --source <path>\n\tSource directory containing executables\n")
+		fmt.Fprintf(os.Stderr, "  -d, --destination <path>\n\tDestination directory for symlinks\n")
 		fmt.Fprintf(os.Stderr, "  -v, --version\n\tShow version information\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help\n\tShow help message\n")
 	}
@@ -307,11 +392,12 @@ func main() {
 	// Prepare items
 	var items []item
 	for _, exe := range executables {
-		selected := isLinkedToSource(absDestDir, absSourceDir, exe)
+		state, target := getLinkState(absDestDir, absSourceDir, exe)
 		items = append(items, item{
-			name:            exe,
-			selected:        selected,
-			initialSelected: selected,
+			name:         exe,
+			state:        state,
+			initialState: state,
+			target:       target,
 		})
 	}
 

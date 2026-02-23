@@ -25,3 +25,5 @@ go.work
 link-cli
 test_source/
 test_dest/
+
+.DS_Store
