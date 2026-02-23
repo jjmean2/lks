@@ -10,6 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+var Version = "dev"
+
 type item struct {
 	name            string
 	selected        bool
@@ -210,11 +212,14 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 func main() {
 	var source string
 	var dest string
+	var versionFlag bool
 
 	flag.StringVar(&source, "source", "", "Source directory (can also use -s)")
 	flag.StringVar(&source, "s", "", "Source directory (shorthand for --source)")
 	flag.StringVar(&dest, "destination", "", "Destination directory (can also use -d)")
 	flag.StringVar(&dest, "d", "", "Destination directory (shorthand for --destination)")
+	flag.BoolVar(&versionFlag, "version", false, "Print version information (can also use -v)")
+	flag.BoolVar(&versionFlag, "v", false, "Print version information (shorthand for --version)")
 
 	// Go's flag package handles -h and --help automatically.
 
@@ -223,10 +228,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "  -s, --source string\n\tSource directory containing executables\n")
 		fmt.Fprintf(os.Stderr, "  -d, --destination string\n\tDestination directory for symlinks\n")
+		fmt.Fprintf(os.Stderr, "  -v, --version\n\tShow version information\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help\n\tShow help message\n")
 	}
 
 	flag.Parse()
+
+	if versionFlag {
+		fmt.Printf("lks version %s\n", Version)
+		os.Exit(0)
+	}
 
 	if source == "" || dest == "" {
 		fmt.Println("Error: Both source (-s, --source) and destination (-d, --destination) are required.")

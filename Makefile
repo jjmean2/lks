@@ -2,13 +2,15 @@
 
 APP_NAME=lks
 BUILD_DIR=./bin
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS=-ldflags "-X main.Version=$(VERSION)"
 
 all: clean build
 
 build:
 	@echo "==> Building $(APP_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	@go build -o $(BUILD_DIR)/$(APP_NAME) main.go
+	@go build $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME) main.go
 	@echo "==> Build complete: $(BUILD_DIR)/$(APP_NAME)"
 
 run: build
