@@ -1,32 +1,41 @@
-# This is an example .goreleaser.yml file with some sensible defaults.
-# Make sure to check the documentation at https://goreleaser.com
+# GoReleaser 설정 파일 최상단 (v2 명세 사용)
 version: 2
+
+# 이 프로젝트의 이름입니다. 빌드되는 바이너리 파일명 등에 기본으로 쓰입니다.
 project_name: lks
 
+# 빌드를 시작하기 전에 실행할 훅(명령어)들을 정의합니다.
 before:
   hooks:
-    - go mod tidying
-    - go build -v ./...
+    - go mod tidy # 불필요한 의존성을 정리합니다 (go mod tidy)
+    - go build -v ./... # 빌드 전 코드가 정상적으로 컴파일되는지 미리 한 번 검증합니다
 
+# 실제 바이너리 빌드(go build) 관련 설정을 정의합니다.
 builds:
   - env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=0 # 의존성 없는 정적(Static) 바이너리로 빌드합니다. (어느 환경에서든 실행 보장)
+    # 어느 운영체제용으로 빌드할지 지정합니다.
     goos:
       - linux
       - windows
-      - darwin
+      - darwin # macOS
+    # 어느 CPU 아키텍처용으로 빌드할지 지정합니다.
     goarch:
-      - amd64
-      - arm64
+      - amd64 # 인텔/AMD 64비트
+      - arm64 # Apple Silicon (M1/M2 등) 및 ARM 서버
+    # 빌드 조합(OS x Arch) 중 제외할 대상을 정합니다.
     ignore:
       - goos: windows
-        goarch: arm64
+        goarch: arm64 # 잘 사용되지 않는 Windows ARM64 빌드는 건너뜁니다.
+    # 빌드 시 주입할 추가 플래그들입니다.
     ldflags:
+      # -s -w 옵션은 바이너리 내 디버깅 정보를 제거하여 파일 용량을 줄입니다.
+      # -X main.Version={{.Version}} 옵션은 main.go의 Version 변수에 릴리스 태그명(예: v1.0.0)을 주입합니다.
       - -s -w -X main.Version={{.Version}}
 
+# 빌드된 바이너리들을 어떻게 압축해서 릴리스 페이지에 올릴지 설정합니다.
 archives:
-  - format: tar.gz
-    # this name template makes the OS and Arch compatible with the results of uname.
+  - # 출력되는 압축 파일의 이름을 정하는 템플릿입니다. Linux uname 결과와 비슷하게 맞춥니다.
     name_template: >-
       {{ .ProjectName }}_
       {{- title .Os }}_
@@ -34,14 +43,12 @@ archives:
       {{- else if eq .Arch "386" }}i386
       {{- else }}{{ .Arch }}{{ end }}
       {{- if .Arm }}v{{ .Arm }}{{ end }}
-    # use zip for windows archives
-    format_overrides:
-      - goos: windows
-        format: zip
 
+# GitHub Release 페이지에 자동 생성되는 변경 사항(Changelog) 내용을 설정합니다.
 changelog:
-  sort: asc
+  sort: asc # 커밋 내역을 오름차순(과거->최신)으로 정렬합니다.
   filters:
+    # 릴리스 노트에서 제외할 커밋 메시지의 정규식 패턴입니다.
     exclude:
-      - '^docs:'
-      - '^test:'
+      - '^docs:' # "docs:" 로 시작하는 문서 수정 커밋 제외
+      - '^test:' # "test:" 로 시작하는 테스트 관련 커밋 제외
