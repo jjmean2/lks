@@ -171,6 +171,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "a":
 			if len(m.items) > 0 {
+				cursorItem := m.items[m.cursor]
+				if cursorItem.isNormal {
+					targetDir := cursorItem.sourceDir
+					allLinked := true
+					for _, it := range m.items {
+						if it.isNormal && it.sourceDir == targetDir && it.state != StateLinked {
+							allLinked = false
+							break
+						}
+					}
+					for i := range m.items {
+						if m.items[i].isNormal && m.items[i].sourceDir == targetDir {
+							if allLinked {
+								m.items[i].state = StateNone
+							} else {
+								m.items[i].state = StateLinked
+							}
+						}
+					}
+				} else if cursorItem.isRadio {
+					targetGroup := cursorItem.radioGroup
+					firstIdx := -1
+					lastIdx := -1
+					for i, it := range m.items {
+						if it.isRadio && it.radioGroup == targetGroup {
+							if firstIdx == -1 {
+								firstIdx = i
+							}
+							lastIdx = i
+						}
+					}
+					if firstIdx != -1 && lastIdx != -1 {
+						if m.items[firstIdx].selected {
+							for i := firstIdx; i <= lastIdx; i++ {
+								m.items[i].selected = (i == lastIdx)
+							}
+						} else {
+							for i := firstIdx; i <= lastIdx; i++ {
+								m.items[i].selected = (i == firstIdx)
+							}
+						}
+					}
+				}
+			}
+		case "A":
+			if len(m.items) > 0 {
 				allLinked := true
 				for _, it := range m.items {
 					if it.isNormal && it.state != StateLinked {
@@ -178,12 +224,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						break
 					}
 				}
+				radioGroupsChecked := make(map[string]bool)
+				for i, it := range m.items {
+					if it.isRadio && !radioGroupsChecked[it.radioGroup] {
+						radioGroupsChecked[it.radioGroup] = true
+						if !m.items[i].selected {
+							allLinked = false
+						}
+					}
+				}
+
 				for i := range m.items {
 					if m.items[i].isNormal {
 						if allLinked {
 							m.items[i].state = StateNone
 						} else {
 							m.items[i].state = StateLinked
+						}
+					}
+				}
+
+				radioGroupsProcessed := make(map[string]bool)
+				for _, it := range m.items {
+					if it.isRadio && !radioGroupsProcessed[it.radioGroup] {
+						targetGroup := it.radioGroup
+						radioGroupsProcessed[targetGroup] = true
+
+						firstIdx := -1
+						lastIdx := -1
+						for j, jit := range m.items {
+							if jit.isRadio && jit.radioGroup == targetGroup {
+								if firstIdx == -1 {
+									firstIdx = j
+								}
+								lastIdx = j
+							}
+						}
+
+						if firstIdx != -1 && lastIdx != -1 {
+							for j := firstIdx; j <= lastIdx; j++ {
+								if allLinked {
+									m.items[j].selected = (j == lastIdx)
+								} else {
+									m.items[j].selected = (j == firstIdx)
+								}
+							}
 						}
 					}
 				}
@@ -242,6 +327,7 @@ func (m model) View() string {
 	down := keyStyle.Render("<down>")
 	space := keyStyle.Render("<space>")
 	aKey := keyStyle.Render("<a>")
+	AKey := keyStyle.Render("<A>")
 	rKey := keyStyle.Render("<r>")
 	RKey := keyStyle.Render("<R>")
 	enter := keyStyle.Render("<enter>")
@@ -249,7 +335,7 @@ func (m model) View() string {
 	ctrlC := keyStyle.Render("<ctrl+c>")
 	ctrlD := keyStyle.Render("<ctrl+d>")
 
-	b.WriteString(fmt.Sprintf("Press %s/%s to navigate, %s to toggle, %s to select all/none.\n", up, down, space, aKey))
+	b.WriteString(fmt.Sprintf("Press %s/%s to navigate, %s to toggle, %s/%s to toggle section/all.\n", up, down, space, aKey, AKey))
 	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, RKey, enter, qKey, ctrlC, ctrlD))
 
 	if len(m.items) == 0 {
