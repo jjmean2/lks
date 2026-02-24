@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	Version  = "dev"                                                // Can still be overridden by ldflags
-	keyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("36")) // Cyan color
+	Version  = "dev"                                                            // Can still be overridden by ldflags
+	keyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("73"))             // Softer Cyan
+	redStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true) // Muted Red
 )
 
 func getVersion() string {
@@ -226,7 +227,7 @@ func (m model) View() string {
 
 	b.WriteString("Link Selection\n\n")
 
-	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true) // Yellow
+	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("186")).Bold(true) // Softer Yellow
 
 	var srcStrs []string
 	for _, s := range m.sourceDirs {
@@ -286,7 +287,7 @@ func (m model) View() string {
 			b.WriteString(fmt.Sprintf("  %s%s %s%s\n", cursor, checked, it.name, targetInfo))
 		} else if it.isRadio {
 			if it.radioGroup != currentRadioGroup {
-				b.WriteString(fmt.Sprintf("\n%s (duplicate in multiple sources):\n", pathStyle.Render(it.radioGroup)))
+				b.WriteString(fmt.Sprintf("\n%s (duplicate in multiple sources):\n", redStyle.Render(it.radioGroup)))
 				currentRadioGroup = it.radioGroup
 			}
 
