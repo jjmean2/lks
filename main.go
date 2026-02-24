@@ -134,6 +134,52 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.items)-1 {
 				m.cursor++
 			}
+		case "shift+up", "K":
+			if m.cursor > 0 {
+				curr := m.items[m.cursor]
+				// Find start of current section
+				startIdx := m.cursor
+				for startIdx > 0 {
+					prev := m.items[startIdx-1]
+					if curr.isNormal && prev.isNormal && curr.sourceDir == prev.sourceDir {
+						startIdx--
+					} else if curr.isRadio && prev.isRadio && curr.radioGroup == prev.radioGroup {
+						startIdx--
+					} else {
+						break
+					}
+				}
+
+				if startIdx > 0 {
+					// We jump to the LAST item of the previous section
+					destIdx := startIdx - 1
+					m.cursor = destIdx
+				} else {
+					m.cursor = 0
+				}
+			}
+		case "shift+down", "J":
+			if m.cursor < len(m.items)-1 {
+				curr := m.items[m.cursor]
+				// Find start of NEXT section
+				destIdx := m.cursor
+				for destIdx < len(m.items) {
+					next := m.items[destIdx]
+					if curr.isNormal && next.isNormal && curr.sourceDir == next.sourceDir {
+						destIdx++
+					} else if curr.isRadio && next.isRadio && curr.radioGroup == next.radioGroup {
+						destIdx++
+					} else {
+						break
+					}
+				}
+				if destIdx < len(m.items) {
+					// We jump to the FIRST item of the next section
+					m.cursor = destIdx
+				} else {
+					m.cursor = len(m.items) - 1
+				}
+			}
 		case " ":
 			if len(m.items) > 0 {
 				it := &m.items[m.cursor]
@@ -325,6 +371,8 @@ func (m model) View() string {
 
 	up := keyStyle.Render("<up>")
 	down := keyStyle.Render("<down>")
+	shiftUp := keyStyle.Render("<shift+up>")
+	shiftDown := keyStyle.Render("<shift+down>")
 	space := keyStyle.Render("<space>")
 	aKey := keyStyle.Render("<a>")
 	AKey := keyStyle.Render("<A>")
@@ -335,7 +383,8 @@ func (m model) View() string {
 	ctrlC := keyStyle.Render("<ctrl+c>")
 	ctrlD := keyStyle.Render("<ctrl+d>")
 
-	b.WriteString(fmt.Sprintf("Press %s/%s to navigate, %s to toggle, %s/%s to toggle section/all.\n", up, down, space, aKey, AKey))
+	b.WriteString(fmt.Sprintf("Press %s/%s to move, %s/%s to jump sections.\n", up, down, shiftUp, shiftDown))
+	b.WriteString(fmt.Sprintf("Press %s to toggle, %s/%s to toggle section/all.\n", space, aKey, AKey))
 	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, RKey, enter, qKey, ctrlC, ctrlD))
 
 	if len(m.items) == 0 {
