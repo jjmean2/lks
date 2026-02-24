@@ -17,6 +17,20 @@ var (
 	Version  = "dev"                                                            // Can still be overridden by ldflags
 	keyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("73"))             // Softer Cyan
 	redStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true) // Muted Red
+
+	upKey        = keyStyle.Render("<up>")
+	downKey      = keyStyle.Render("<down>")
+	shiftUpKey   = keyStyle.Render("<shift+up>")
+	shiftDownKey = keyStyle.Render("<shift+down>")
+	spaceKey     = keyStyle.Render("<space>")
+	aKeyLabel    = keyStyle.Render("<a>")
+	AKeyLabel    = keyStyle.Render("<A>")
+	rKeyLabel    = keyStyle.Render("<r>")
+	RKeyLabel    = keyStyle.Render("<R>")
+	enterKey     = keyStyle.Render("<enter>")
+	qKeyLabel    = keyStyle.Render("<q>")
+	ctrlCKey     = keyStyle.Render("<ctrl+c>")
+	ctrlDKey     = keyStyle.Render("<ctrl+d>")
 )
 
 func getVersion() string {
@@ -99,12 +113,14 @@ type item struct {
 }
 
 type model struct {
-	items      []item
-	cursor     int
-	sourceDirs []string
-	destDir    string
-	quitting   bool
-	confirmed  bool
+	items         []item
+	cursor        int
+	sourceDirs    []string
+	destDir       string
+	quitting      bool
+	confirmed     bool
+	height        int
+	viewportStart int
 }
 
 func initialModel(sourceDirs []string, destDir string, items []item) model {
@@ -121,6 +137,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "ctrl+d", "q":
@@ -346,16 +364,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 	}
+
+	line := 0
+	currentSourceDir := ""
+	currentRadioGroup := ""
+	cursorLine := 0
+	for i, it := range m.items {
+		if it.isNormal {
+			if it.sourceDir != currentSourceDir {
+				line += 2
+				currentSourceDir = it.sourceDir
+			}
+			if m.cursor == i {
+				cursorLine = line
+			}
+			line++
+		} else if it.isRadio {
+			if it.radioGroup != currentRadioGroup {
+				line += 2
+				currentRadioGroup = it.radioGroup
+			}
+			if m.cursor == i {
+				cursorLine = line
+			}
+			line++
+		}
+	}
+
+	if m.height > 0 {
+		listHeight := m.height - lipgloss.Height(m.headerView()) - 1
+		if listHeight < 5 {
+			listHeight = 5
+		}
+
+		if cursorLine < m.viewportStart {
+			m.viewportStart = cursorLine
+		} else if cursorLine >= m.viewportStart+listHeight {
+			m.viewportStart = cursorLine - listHeight + 1
+		}
+	}
+
 	return m, nil
 }
 
-func (m model) View() string {
-	if m.quitting || m.confirmed {
-		return ""
-	}
-
+func (m model) headerView() string {
 	var b strings.Builder
-
 	b.WriteString("Link Selection\n\n")
 
 	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("186")).Bold(true) // Softer Yellow
@@ -369,35 +422,36 @@ func (m model) View() string {
 
 	b.WriteString(fmt.Sprintf("The selected executables in %s\nwill be linked to %s.\n\n", src, dst))
 
-	up := keyStyle.Render("<up>")
-	down := keyStyle.Render("<down>")
-	shiftUp := keyStyle.Render("<shift+up>")
-	shiftDown := keyStyle.Render("<shift+down>")
-	space := keyStyle.Render("<space>")
-	aKey := keyStyle.Render("<a>")
-	AKey := keyStyle.Render("<A>")
-	rKey := keyStyle.Render("<r>")
-	RKey := keyStyle.Render("<R>")
-	enter := keyStyle.Render("<enter>")
-	qKey := keyStyle.Render("<q>")
-	ctrlC := keyStyle.Render("<ctrl+c>")
-	ctrlD := keyStyle.Render("<ctrl+d>")
+	b.WriteString(fmt.Sprintf("Press %s/%s to move, %s/%s to jump sections.\n", upKey, downKey, shiftUpKey, shiftDownKey))
+	b.WriteString(fmt.Sprintf("Press %s to toggle, %s/%s to toggle section/all.\n", spaceKey, aKeyLabel, AKeyLabel))
+	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKeyLabel, RKeyLabel, enterKey, qKeyLabel, ctrlCKey, ctrlDKey))
 
-	b.WriteString(fmt.Sprintf("Press %s/%s to move, %s/%s to jump sections.\n", up, down, shiftUp, shiftDown))
-	b.WriteString(fmt.Sprintf("Press %s to toggle, %s/%s to toggle section/all.\n", space, aKey, AKey))
-	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, RKey, enter, qKey, ctrlC, ctrlD))
+	return b.String()
+}
+
+func (m model) View() string {
+	if m.quitting || m.confirmed {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString(m.headerView())
 
 	if len(m.items) == 0 {
 		b.WriteString("No executable files found in the source directories.\n")
 		return b.String()
 	}
 
+	var listLines []string
+	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("186")).Bold(true)
+
 	currentSourceDir := ""
 	currentRadioGroup := ""
 	for i, it := range m.items {
 		if it.isNormal {
 			if it.sourceDir != currentSourceDir {
-				b.WriteString(fmt.Sprintf("\n%s:\n", pathStyle.Render(it.sourceDir)))
+				listLines = append(listLines, "")
+				listLines = append(listLines, fmt.Sprintf("%s:", pathStyle.Render(it.sourceDir)))
 				currentSourceDir = it.sourceDir
 			}
 
@@ -419,10 +473,11 @@ func (m model) View() string {
 				checked = "!"
 			}
 
-			b.WriteString(fmt.Sprintf("  %s%s %s%s\n", cursor, checked, it.name, targetInfo))
+			listLines = append(listLines, fmt.Sprintf("  %s%s %s%s", cursor, checked, it.name, targetInfo))
 		} else if it.isRadio {
 			if it.radioGroup != currentRadioGroup {
-				b.WriteString(fmt.Sprintf("\n%s (duplicate in multiple sources):\n", redStyle.Render(it.radioGroup)))
+				listLines = append(listLines, "")
+				listLines = append(listLines, fmt.Sprintf("%s (duplicate in multiple sources):", redStyle.Render(it.radioGroup)))
 				currentRadioGroup = it.radioGroup
 			}
 
@@ -435,8 +490,29 @@ func (m model) View() string {
 			if it.selected {
 				checked = "●"
 			}
-			b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, checked, it.radioLabel))
+			listLines = append(listLines, fmt.Sprintf("  %s%s %s", cursor, checked, it.radioLabel))
 		}
+	}
+
+	listHeight := m.height - lipgloss.Height(m.headerView()) - 1
+	if listHeight < 5 {
+		listHeight = len(listLines)
+	}
+
+	start := m.viewportStart
+	end := start + listHeight
+	if start < 0 {
+		start = 0
+	}
+	if end > len(listLines) {
+		end = len(listLines)
+	}
+	if start > end {
+		start = end
+	}
+
+	for _, line := range listLines[start:end] {
+		b.WriteString(line + "\n")
 	}
 
 	return b.String()
