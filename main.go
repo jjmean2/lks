@@ -149,6 +149,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case "r":
+			if len(m.items) > 0 {
+				m.items[m.cursor].state = m.items[m.cursor].initialState
+			}
+		case "R":
 			for i := range m.items {
 				m.items[i].state = m.items[i].initialState
 			}
@@ -180,13 +184,14 @@ func (m model) View() string {
 	space := keyStyle.Render("<space>")
 	aKey := keyStyle.Render("<a>")
 	rKey := keyStyle.Render("<r>")
+	RKey := keyStyle.Render("<R>")
 	enter := keyStyle.Render("<enter>")
 	qKey := keyStyle.Render("<q>")
 	ctrlC := keyStyle.Render("<ctrl+c>")
 	ctrlD := keyStyle.Render("<ctrl+d>")
 
 	b.WriteString(fmt.Sprintf("Press %s/%s to navigate, %s to toggle, %s to select all/none.\n", up, down, space, aKey))
-	b.WriteString(fmt.Sprintf("Press %s to reset, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, enter, qKey, ctrlC, ctrlD))
+	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, RKey, enter, qKey, ctrlC, ctrlD))
 
 	if len(m.items) == 0 {
 		b.WriteString("No executable files found in the source directory.\n")
