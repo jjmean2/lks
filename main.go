@@ -57,6 +57,17 @@ func getVersion() string {
 	return "dev"
 }
 
+type StringSliceFlag []string
+
+func (i *StringSliceFlag) String() string {
+	return strings.Join(*i, ", ")
+}
+
+func (i *StringSliceFlag) Set(value string) error {
+	*i = append(*i, value)
+	return nil
+}
+
 type LinkState int
 
 const (
@@ -67,25 +78,26 @@ const (
 
 type item struct {
 	name         string
+	sourceDir    string
 	state        LinkState
 	initialState LinkState
 	target       string
 }
 
 type model struct {
-	items     []item
-	cursor    int
-	sourceDir string
-	destDir   string
-	quitting  bool
-	confirmed bool
+	items      []item
+	cursor     int
+	sourceDirs []string
+	destDir    string
+	quitting   bool
+	confirmed  bool
 }
 
-func initialModel(sourceDir, destDir string, items []item) model {
+func initialModel(sourceDirs []string, destDir string, items []item) model {
 	return model{
-		items:     items,
-		sourceDir: sourceDir,
-		destDir:   destDir,
+		items:      items,
+		sourceDirs: sourceDirs,
+		destDir:    destDir,
 	}
 }
 
@@ -174,7 +186,12 @@ func (m model) View() string {
 	b.WriteString("Link Selection\n\n")
 
 	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true) // Yellow
-	src := pathStyle.Render(m.sourceDir)
+
+	var srcStrs []string
+	for _, s := range m.sourceDirs {
+		srcStrs = append(srcStrs, pathStyle.Render(s))
+	}
+	src := strings.Join(srcStrs, ", ")
 	dst := pathStyle.Render(m.destDir)
 
 	b.WriteString(fmt.Sprintf("The selected executables in %s\nwill be linked to %s.\n\n", src, dst))
@@ -194,11 +211,17 @@ func (m model) View() string {
 	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKey, RKey, enter, qKey, ctrlC, ctrlD))
 
 	if len(m.items) == 0 {
-		b.WriteString("No executable files found in the source directory.\n")
+		b.WriteString("No executable files found in the source directories.\n")
 		return b.String()
 	}
 
+	currentSourceDir := ""
 	for i, it := range m.items {
+		if it.sourceDir != currentSourceDir {
+			b.WriteString(fmt.Sprintf("\n%s:\n", pathStyle.Render(it.sourceDir)))
+			currentSourceDir = it.sourceDir
+		}
+
 		cursor := "  "
 		if m.cursor == i {
 			cursor = "> "
@@ -217,7 +240,7 @@ func (m model) View() string {
 			checked = "!"
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, checked, it.name, targetInfo))
+		b.WriteString(fmt.Sprintf("  %s%s %s%s\n", cursor, checked, it.name, targetInfo))
 	}
 
 	return b.String()
@@ -242,11 +265,7 @@ func getExecutables(dir string) ([]string, error) {
 	return execs, nil
 }
 
-func applyChanges(sourceDir, destDir string, items []item) error {
-	absSourceDir, err := filepath.Abs(sourceDir)
-	if err != nil {
-		return err
-	}
+func applyChanges(destDir string, items []item) error {
 	absDestDir, err := filepath.Abs(destDir)
 	if err != nil {
 		return err
@@ -263,7 +282,7 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 		}
 
 		destPath := getDestPath(absDestDir, it.name)
-		sourcePath := filepath.Join(absSourceDir, it.name)
+		sourcePath := filepath.Join(it.sourceDir, it.name)
 
 		if it.state == StateLinked {
 			// Newly selected: create link
@@ -282,7 +301,7 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 			}
 		} else if it.state == StateNone {
 			// Newly unselected: remove link ONLY if it's managed by us
-			state, _ := getLinkState(absDestDir, absSourceDir, it.name)
+			state, _ := getLinkState(absDestDir, it.sourceDir, it.name)
 			if state == StateLinked || state == StateInvalid {
 				err := removeLink(destPath)
 				if err != nil {
@@ -302,12 +321,12 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 }
 
 func main() {
-	var source string
+	var sources StringSliceFlag
 	var dest string
 	var versionFlag bool
 
-	flag.StringVar(&source, "source", "", "Source directory (can also use -s)")
-	flag.StringVar(&source, "s", "", "Source directory (shorthand for --source)")
+	flag.Var(&sources, "source", "Source directory (can also use -s)")
+	flag.Var(&sources, "s", "Source directory (shorthand for --source)")
 	flag.StringVar(&dest, "destination", "", "Destination directory (can also use -d)")
 	flag.StringVar(&dest, "d", "", "Destination directory (shorthand for --destination)")
 	flag.BoolVar(&versionFlag, "version", false, "Print version information (can also use -v)")
@@ -318,9 +337,9 @@ func main() {
 	// Change custom usage description
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "A CLI tool to interactively manage links between directories.\n\n")
-		fmt.Fprintf(os.Stderr, "Usage: lks -s <src> -d <dest>\n\n")
+		fmt.Fprintf(os.Stderr, "Usage: lks -s <src1> -s <src2> -d <dest>\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
-		fmt.Fprintf(os.Stderr, "  -s, --source <path>\n\tSource directory containing executables\n")
+		fmt.Fprintf(os.Stderr, "  -s, --source <path>\n\tSource directory containing executables (can be specified multiple times)\n")
 		fmt.Fprintf(os.Stderr, "  -d, --destination <path>\n\tDestination directory for links\n")
 		fmt.Fprintf(os.Stderr, "  -v, --version\n\tShow version information\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help\n\tShow help message\n")
@@ -333,43 +352,50 @@ func main() {
 		os.Exit(0)
 	}
 
-	if source == "" || dest == "" {
+	if len(sources) == 0 || dest == "" {
 		fmt.Println("Error: Both source (-s, --source) and destination (-d, --destination) are required.")
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	absSourceDir, err := filepath.Abs(source)
-	if err != nil {
-		fmt.Printf("Error resolving source directory: %v\n", err)
-		os.Exit(1)
+	var absSourceDirs []string
+	for _, s := range sources {
+		absDir, err := filepath.Abs(s)
+		if err != nil {
+			fmt.Printf("Error resolving source directory '%s': %v\n", s, err)
+			os.Exit(1)
+		}
+		absSourceDirs = append(absSourceDirs, absDir)
 	}
+
 	absDestDir, err := filepath.Abs(dest)
 	if err != nil {
 		fmt.Printf("Error resolving destination directory: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Read executables from source
-	executables, err := getExecutables(absSourceDir)
-	if err != nil {
-		fmt.Printf("Error reading source directory: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Prepare items
 	var items []item
-	for _, exe := range executables {
-		state, target := getLinkState(absDestDir, absSourceDir, exe)
-		items = append(items, item{
-			name:         exe,
-			state:        state,
-			initialState: state,
-			target:       target,
-		})
+
+	for _, absSourceDir := range absSourceDirs {
+		executables, err := getExecutables(absSourceDir)
+		if err != nil {
+			fmt.Printf("Error reading source directory '%s': %v\n", absSourceDir, err)
+			os.Exit(1)
+		}
+
+		for _, exe := range executables {
+			state, target := getLinkState(absDestDir, absSourceDir, exe)
+			items = append(items, item{
+				name:         exe,
+				sourceDir:    absSourceDir,
+				state:        state,
+				initialState: state,
+				target:       target,
+			})
+		}
 	}
 
-	p := tea.NewProgram(initialModel(absSourceDir, absDestDir, items))
+	p := tea.NewProgram(initialModel(absSourceDirs, absDestDir, items))
 	m, err := p.Run()
 	if err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
@@ -380,7 +406,7 @@ func main() {
 		if finalModel.confirmed {
 			// Print a newline to separate TUI from execution logs
 			fmt.Println("\nApplying changes...")
-			err := applyChanges(absSourceDir, absDestDir, finalModel.items)
+			err := applyChanges(absDestDir, finalModel.items)
 			if err != nil {
 				fmt.Printf("Error applying changes: %v\n", err)
 			} else {
