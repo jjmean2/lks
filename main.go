@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -77,11 +78,23 @@ const (
 )
 
 type item struct {
-	name         string
+	// Common
+	name string
+
+	// Normal items
+	isNormal     bool
 	sourceDir    string
 	state        LinkState
 	initialState LinkState
 	target       string
+
+	// Radio items
+	isRadio         bool
+	radioGroup      string // The name of the executable
+	radioValue      string // The path it points to, or "none"
+	radioLabel      string // The text to display
+	selected        bool
+	initialSelected bool
 }
 
 type model struct {
@@ -122,24 +135,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case " ":
 			if len(m.items) > 0 {
-				currentState := m.items[m.cursor].state
-				initialState := m.items[m.cursor].initialState
+				it := &m.items[m.cursor]
+				if it.isNormal {
+					currentState := it.state
+					initialState := it.initialState
 
-				if initialState == StateInvalid {
-					// Toggle sequence: ! -> ● -> ○ -> !
-					if currentState == StateInvalid {
-						m.items[m.cursor].state = StateLinked
-					} else if currentState == StateLinked {
-						m.items[m.cursor].state = StateNone
-					} else if currentState == StateNone {
-						m.items[m.cursor].state = StateInvalid
+					if initialState == StateInvalid {
+						// Toggle sequence: ! -> ● -> ○ -> !
+						if currentState == StateInvalid {
+							it.state = StateLinked
+						} else if currentState == StateLinked {
+							it.state = StateNone
+						} else if currentState == StateNone {
+							it.state = StateInvalid
+						}
+					} else {
+						// Toggle sequence: ● -> ○ -> ●
+						if currentState == StateLinked {
+							it.state = StateNone
+						} else if currentState == StateNone {
+							it.state = StateLinked
+						}
 					}
-				} else {
-					// Toggle sequence: ● -> ○ -> ●
-					if currentState == StateLinked {
-						m.items[m.cursor].state = StateNone
-					} else if currentState == StateNone {
-						m.items[m.cursor].state = StateLinked
+				} else if it.isRadio {
+					if !it.selected {
+						group := it.radioGroup
+						for i := range m.items {
+							if m.items[i].isRadio && m.items[i].radioGroup == group {
+								m.items[i].selected = (i == m.cursor)
+							}
+						}
 					}
 				}
 			}
@@ -147,26 +172,42 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.items) > 0 {
 				allLinked := true
 				for _, it := range m.items {
-					if it.state != StateLinked {
+					if it.isNormal && it.state != StateLinked {
 						allLinked = false
 						break
 					}
 				}
 				for i := range m.items {
-					if allLinked {
-						m.items[i].state = StateNone
-					} else {
-						m.items[i].state = StateLinked
+					if m.items[i].isNormal {
+						if allLinked {
+							m.items[i].state = StateNone
+						} else {
+							m.items[i].state = StateLinked
+						}
 					}
 				}
 			}
 		case "r":
 			if len(m.items) > 0 {
-				m.items[m.cursor].state = m.items[m.cursor].initialState
+				it := &m.items[m.cursor]
+				if it.isNormal {
+					it.state = it.initialState
+				} else if it.isRadio {
+					group := it.radioGroup
+					for i := range m.items {
+						if m.items[i].isRadio && m.items[i].radioGroup == group {
+							m.items[i].selected = m.items[i].initialSelected
+						}
+					}
+				}
 			}
 		case "R":
 			for i := range m.items {
-				m.items[i].state = m.items[i].initialState
+				if m.items[i].isNormal {
+					m.items[i].state = m.items[i].initialState
+				} else if m.items[i].isRadio {
+					m.items[i].selected = m.items[i].initialSelected
+				}
 			}
 		case "enter":
 			m.confirmed = true
@@ -216,31 +257,50 @@ func (m model) View() string {
 	}
 
 	currentSourceDir := ""
+	currentRadioGroup := ""
 	for i, it := range m.items {
-		if it.sourceDir != currentSourceDir {
-			b.WriteString(fmt.Sprintf("\n%s:\n", pathStyle.Render(it.sourceDir)))
-			currentSourceDir = it.sourceDir
+		if it.isNormal {
+			if it.sourceDir != currentSourceDir {
+				b.WriteString(fmt.Sprintf("\n%s:\n", pathStyle.Render(it.sourceDir)))
+				currentSourceDir = it.sourceDir
+			}
+
+			cursor := "  "
+			if m.cursor == i {
+				cursor = "> "
+			}
+
+			checked := "○"
+			targetInfo := ""
+
+			if it.initialState == StateInvalid {
+				targetInfo = fmt.Sprintf(" [%s]", it.target)
+			}
+
+			if it.state == StateLinked {
+				checked = "●"
+			} else if it.state == StateInvalid {
+				checked = "!"
+			}
+
+			b.WriteString(fmt.Sprintf("  %s%s %s%s\n", cursor, checked, it.name, targetInfo))
+		} else if it.isRadio {
+			if it.radioGroup != currentRadioGroup {
+				b.WriteString(fmt.Sprintf("\n%s (duplicate in multiple sources):\n", pathStyle.Render(it.radioGroup)))
+				currentRadioGroup = it.radioGroup
+			}
+
+			cursor := "  "
+			if m.cursor == i {
+				cursor = "> "
+			}
+
+			checked := "○"
+			if it.selected {
+				checked = "●"
+			}
+			b.WriteString(fmt.Sprintf("  %s%s %s\n", cursor, checked, it.radioLabel))
 		}
-
-		cursor := "  "
-		if m.cursor == i {
-			cursor = "> "
-		}
-
-		checked := "○"
-		targetInfo := ""
-
-		if it.initialState == StateInvalid {
-			targetInfo = fmt.Sprintf(" [%s]", it.target)
-		}
-
-		if it.state == StateLinked {
-			checked = "●"
-		} else if it.state == StateInvalid {
-			checked = "!"
-		}
-
-		b.WriteString(fmt.Sprintf("  %s%s %s%s\n", cursor, checked, it.name, targetInfo))
 	}
 
 	return b.String()
@@ -274,40 +334,69 @@ func applyChanges(destDir string, items []item) error {
 	var errorMessages []string
 
 	for _, it := range items {
-		if it.state == it.initialState {
-			continue // No change
-		}
-		if it.state == StateInvalid { // Cannot intentionally select an invalid state
-			continue
-		}
-
-		destPath := getDestPath(absDestDir, it.name)
-		sourcePath := filepath.Join(it.sourceDir, it.name)
-
-		if it.state == StateLinked {
-			// Newly selected: create link
-			err := checkLinkConflict(destPath)
-			if err != nil {
-				errorMessages = append(errorMessages, fmt.Sprintf("Warning: '%s' %v", destPath, err))
+		if it.isNormal {
+			if it.state == it.initialState {
+				continue // No change
+			}
+			if it.state == StateInvalid { // Cannot intentionally select an invalid state
 				continue
 			}
-			os.Remove(destPath)
 
-			err = createLink(sourcePath, destPath)
-			if err != nil {
-				errorMessages = append(errorMessages, fmt.Sprintf("Error creating link for '%s': %v", it.name, err))
-			} else {
-				fmt.Printf("Created link: %s\n", destPath)
-			}
-		} else if it.state == StateNone {
-			// Newly unselected: remove link ONLY if it's managed by us
-			state, _ := getLinkState(absDestDir, it.sourceDir, it.name)
-			if state == StateLinked || state == StateInvalid {
-				err := removeLink(destPath)
+			destPath := getDestPath(absDestDir, it.name)
+			sourcePath := filepath.Join(it.sourceDir, it.name)
+
+			if it.state == StateLinked {
+				// Newly selected: create link
+				err := checkLinkConflict(destPath)
 				if err != nil {
-					errorMessages = append(errorMessages, fmt.Sprintf("Error removing link for '%s': %v", it.name, err))
+					errorMessages = append(errorMessages, fmt.Sprintf("Warning: '%s' %v", destPath, err))
+					continue
+				}
+				os.Remove(destPath)
+
+				err = createLink(sourcePath, destPath)
+				if err != nil {
+					errorMessages = append(errorMessages, fmt.Sprintf("Error creating link for '%s': %v", it.name, err))
 				} else {
-					fmt.Printf("Removed link: %s\n", destPath)
+					fmt.Printf("Created link: %s\n", destPath)
+				}
+			} else if it.state == StateNone {
+				// Newly unselected: remove link ONLY if it's managed by us
+				state, _ := getLinkState(absDestDir, it.sourceDir, it.name)
+				if state == StateLinked || state == StateInvalid {
+					err := removeLink(destPath)
+					if err != nil {
+						errorMessages = append(errorMessages, fmt.Sprintf("Error removing link for '%s': %v", it.name, err))
+					} else {
+						fmt.Printf("Removed link: %s\n", destPath)
+					}
+				}
+			}
+		} else if it.isRadio {
+			if it.selected && !it.initialSelected {
+				destPath := filepath.Join(absDestDir, it.radioGroup)
+
+				if it.radioValue == "none" {
+					err := removeLink(destPath)
+					if err != nil {
+						errorMessages = append(errorMessages, fmt.Sprintf("Error removing link for '%s': %v", it.radioGroup, err))
+					} else {
+						fmt.Printf("Removed link: %s\n", destPath)
+					}
+				} else {
+					err := checkLinkConflict(destPath)
+					if err != nil {
+						errorMessages = append(errorMessages, fmt.Sprintf("Warning: '%s' %v", destPath, err))
+						continue
+					}
+					os.Remove(destPath)
+
+					err = createLink(it.radioValue, destPath)
+					if err != nil {
+						errorMessages = append(errorMessages, fmt.Sprintf("Error creating link for '%s': %v", it.radioGroup, err))
+					} else {
+						fmt.Printf("Created link: %s\n", destPath)
+					}
 				}
 			}
 		}
@@ -374,7 +463,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	var items []item
+	fileSources := make(map[string][]string)
 
 	for _, absSourceDir := range absSourceDirs {
 		executables, err := getExecutables(absSourceDir)
@@ -384,15 +473,94 @@ func main() {
 		}
 
 		for _, exe := range executables {
-			state, target := getLinkState(absDestDir, absSourceDir, exe)
+			fileSources[exe] = append(fileSources[exe], absSourceDir)
+		}
+	}
+
+	var items []item
+
+	for _, absSourceDir := range absSourceDirs {
+		executables, _ := getExecutables(absSourceDir)
+		for _, exe := range executables {
+			if len(fileSources[exe]) == 1 {
+				state, target := getLinkState(absDestDir, absSourceDir, exe)
+				items = append(items, item{
+					name:         exe,
+					isNormal:     true,
+					sourceDir:    absSourceDir,
+					state:        state,
+					initialState: state,
+					target:       target,
+				})
+			}
+		}
+	}
+
+	var duplicates []string
+	for exe, srcs := range fileSources {
+		if len(srcs) > 1 {
+			duplicates = append(duplicates, exe)
+		}
+	}
+	sort.Strings(duplicates)
+
+	for _, exe := range duplicates {
+		srcs := fileSources[exe]
+		destPath := filepath.Join(absDestDir, exe)
+		target, err := os.Readlink(destPath)
+
+		existingTarget := ""
+		if err == nil {
+			existingTarget = target
+		}
+
+		hasExistingTargetOption := false
+		if existingTarget != "" {
+			matchedSource := false
+			for _, s := range srcs {
+				if existingTarget == filepath.Join(s, exe) {
+					matchedSource = true
+					break
+				}
+			}
+			if !matchedSource {
+				hasExistingTargetOption = true
+			}
+		}
+
+		if hasExistingTargetOption {
 			items = append(items, item{
-				name:         exe,
-				sourceDir:    absSourceDir,
-				state:        state,
-				initialState: state,
-				target:       target,
+				isRadio:         true,
+				radioGroup:      exe,
+				radioValue:      existingTarget,
+				radioLabel:      existingTarget,
+				selected:        true,
+				initialSelected: true,
 			})
 		}
+
+		for _, s := range srcs {
+			val := filepath.Join(s, exe)
+			selected := (val == existingTarget)
+			items = append(items, item{
+				isRadio:         true,
+				radioGroup:      exe,
+				radioValue:      val,
+				radioLabel:      val,
+				selected:        selected,
+				initialSelected: selected,
+			})
+		}
+
+		selectedNone := (existingTarget == "")
+		items = append(items, item{
+			isRadio:         true,
+			radioGroup:      exe,
+			radioValue:      "none",
+			radioLabel:      "none",
+			selected:        selectedNone,
+			initialSelected: selectedNone,
+		})
 	}
 
 	p := tea.NewProgram(initialModel(absSourceDirs, absDestDir, items))
