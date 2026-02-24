@@ -167,13 +167,13 @@ func (m model) View() string {
 
 	var b strings.Builder
 
-	b.WriteString("Symlink Selection\n\n")
+	b.WriteString("Link Selection\n\n")
 
 	pathStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("226")).Bold(true) // Yellow
 	src := pathStyle.Render(m.sourceDir)
 	dst := pathStyle.Render(m.destDir)
 
-	b.WriteString(fmt.Sprintf("The selected executables in %s\nwill be symlinked to %s.\n\n", src, dst))
+	b.WriteString(fmt.Sprintf("The selected executables in %s\nwill be linked to %s.\n\n", src, dst))
 
 	up := keyStyle.Render("<up>")
 	down := keyStyle.Render("<down>")
@@ -237,34 +237,6 @@ func getExecutables(dir string) ([]string, error) {
 	return execs, nil
 }
 
-func getLinkState(destDir, sourceDir, filename string) (LinkState, string) {
-	destPath := filepath.Join(destDir, filename)
-	sourcePath := filepath.Join(sourceDir, filename)
-
-	fileInfo, err := os.Lstat(destPath)
-	if err != nil {
-		return StateNone, ""
-	}
-
-	if fileInfo.Mode()&os.ModeSymlink != 0 {
-		target, err := os.Readlink(destPath)
-		if err == nil {
-			// On some systems Readlink returns relative path, resolve it
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(destDir, target)
-			}
-			absTarget, _ := filepath.Abs(target)
-			absSource, _ := filepath.Abs(sourcePath)
-
-			if absTarget == absSource {
-				return StateLinked, ""
-			}
-			return StateInvalid, target
-		}
-	}
-	return StateNone, ""
-}
-
 func applyChanges(sourceDir, destDir string, items []item) error {
 	absSourceDir, err := filepath.Abs(sourceDir)
 	if err != nil {
@@ -285,38 +257,33 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 			continue
 		}
 
-		destPath := filepath.Join(absDestDir, it.name)
+		destPath := getDestPath(absDestDir, it.name)
 		sourcePath := filepath.Join(absSourceDir, it.name)
 
 		if it.state == StateLinked {
-			// Newly selected: create symlink
-			fileInfo, err := os.Lstat(destPath)
-			if err == nil {
-				// Destination file exists.
-				if fileInfo.Mode()&os.ModeSymlink == 0 {
-					errorMessages = append(errorMessages, fmt.Sprintf("Warning: Skipped '%s' because destination exists and is not a symlink.", destPath))
-					continue
-				} else {
-					// It's a symlink, so we can safely remove it to replace with our symlink
-					os.Remove(destPath)
-				}
-			}
-
-			err = os.Symlink(sourcePath, destPath)
+			// Newly selected: create link
+			err := checkLinkConflict(destPath)
 			if err != nil {
-				errorMessages = append(errorMessages, fmt.Sprintf("Error creating symlink for '%s': %v", it.name, err))
+				errorMessages = append(errorMessages, fmt.Sprintf("Warning: '%s' %v", destPath, err))
+				continue
+			}
+			os.Remove(destPath)
+
+			err = createLink(sourcePath, destPath)
+			if err != nil {
+				errorMessages = append(errorMessages, fmt.Sprintf("Error creating link for '%s': %v", it.name, err))
 			} else {
-				fmt.Printf("Created symlink: %s -> %s\n", destPath, sourcePath)
+				fmt.Printf("Created link: %s\n", destPath)
 			}
 		} else if it.state == StateNone {
-			// Newly unselected: remove symlink ONLY if it points to source, or if it was invalid (which means we toggle off the invalid symlink)
+			// Newly unselected: remove link ONLY if it's managed by us
 			state, _ := getLinkState(absDestDir, absSourceDir, it.name)
 			if state == StateLinked || state == StateInvalid {
-				err := os.Remove(destPath)
+				err := removeLink(destPath)
 				if err != nil {
-					errorMessages = append(errorMessages, fmt.Sprintf("Error removing symlink for '%s': %v", it.name, err))
+					errorMessages = append(errorMessages, fmt.Sprintf("Error removing link for '%s': %v", it.name, err))
 				} else {
-					fmt.Printf("Removed symlink: %s\n", destPath)
+					fmt.Printf("Removed link: %s\n", destPath)
 				}
 			}
 		}
@@ -324,9 +291,6 @@ func applyChanges(sourceDir, destDir string, items []item) error {
 
 	if len(errorMessages) > 0 {
 		fmt.Println(strings.Join(errorMessages, "\n"))
-	} else {
-		// Just to indicate completion if changes were made and no errors occurred and no explicit print statements printed
-		// actually, we print "Created symlink:" and "Removed symlink:" above, which is transparent enough.
 	}
 
 	return nil
@@ -348,11 +312,11 @@ func main() {
 
 	// Change custom usage description
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "A CLI tool to interactively manage symlinks between directories.\n\n")
+		fmt.Fprintf(os.Stderr, "A CLI tool to interactively manage links between directories.\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: lks -s <src> -d <dest>\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		fmt.Fprintf(os.Stderr, "  -s, --source <path>\n\tSource directory containing executables\n")
-		fmt.Fprintf(os.Stderr, "  -d, --destination <path>\n\tDestination directory for symlinks\n")
+		fmt.Fprintf(os.Stderr, "  -d, --destination <path>\n\tDestination directory for links\n")
 		fmt.Fprintf(os.Stderr, "  -v, --version\n\tShow version information\n")
 		fmt.Fprintf(os.Stderr, "  -h, --help\n\tShow help message\n")
 	}
