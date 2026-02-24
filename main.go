@@ -228,8 +228,7 @@ func getExecutables(dir string) ([]string, error) {
 		if !entry.IsDir() {
 			info, err := entry.Info()
 			if err == nil {
-				// Check if file is executable (owner, group, or other)
-				if info.Mode()&0111 != 0 {
+				if IsExecutable(info) {
 					execs = append(execs, entry.Name())
 				}
 			}
