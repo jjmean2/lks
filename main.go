@@ -25,6 +25,7 @@ var (
 	spaceKey     = keyStyle.Render("<space>")
 	aKeyLabel    = keyStyle.Render("<a>")
 	AKeyLabel    = keyStyle.Render("<A>")
+	uKeyLabel    = keyStyle.Render("<u>")
 	rKeyLabel    = keyStyle.Render("<r>")
 	RKeyLabel    = keyStyle.Render("<R>")
 	enterKey     = keyStyle.Render("<enter>")
@@ -337,13 +338,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-		case "r":
+		case "u":
 			if len(m.items) > 0 {
 				it := &m.items[m.cursor]
 				if it.isNormal {
 					it.state = it.initialState
 				} else if it.isRadio {
 					group := it.radioGroup
+					for i := range m.items {
+						if m.items[i].isRadio && m.items[i].radioGroup == group {
+							m.items[i].selected = m.items[i].initialSelected
+						}
+					}
+				}
+			}
+		case "r":
+			if len(m.items) > 0 {
+				cursorItem := m.items[m.cursor]
+				if cursorItem.isNormal {
+					targetDir := cursorItem.sourceDir
+					for i := range m.items {
+						if m.items[i].isNormal && m.items[i].sourceDir == targetDir {
+							m.items[i].state = m.items[i].initialState
+						}
+					}
+				} else if cursorItem.isRadio {
+					group := cursorItem.radioGroup
 					for i := range m.items {
 						if m.items[i].isRadio && m.items[i].radioGroup == group {
 							m.items[i].selected = m.items[i].initialSelected
@@ -424,7 +444,7 @@ func (m model) headerView() string {
 
 	b.WriteString(fmt.Sprintf("Press %s/%s to move, %s/%s to jump sections.\n", upKey, downKey, shiftUpKey, shiftDownKey))
 	b.WriteString(fmt.Sprintf("Press %s to toggle, %s/%s to toggle section/all.\n", spaceKey, aKeyLabel, AKeyLabel))
-	b.WriteString(fmt.Sprintf("Press %s/%s to reset current/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", rKeyLabel, RKeyLabel, enterKey, qKeyLabel, ctrlCKey, ctrlDKey))
+	b.WriteString(fmt.Sprintf("Press %s/%s/%s to reset item/section/all, %s to confirm, %s,%s,%s to quit without saving.\n\n", uKeyLabel, rKeyLabel, RKeyLabel, enterKey, qKeyLabel, ctrlCKey, ctrlDKey))
 
 	return b.String()
 }
